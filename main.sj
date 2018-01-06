@@ -4,7 +4,7 @@
 #include(<lib/sj-lib-json/rapidjson/stringbuffer.h>)
 --cinclude--
 
-// package json {
+package json {
     document_load(s : 'string) {
         s.nullTerminate()
         d : document()
@@ -96,4 +96,4 @@
         _this->v = _from->v;
         --c--
     } destroy { }
-// }
+}
