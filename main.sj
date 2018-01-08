@@ -4,96 +4,155 @@
 #include(<lib/sj-lib-json/rapidjson/stringbuffer.h>)
 --cinclude--
 
+--cfunction--
+typedef rapidjson::GenericValue<rapidjson::UTF8<>, rapidjson::MemoryPoolAllocator<> > JsonValue;
+--cfunction--
+
 package json {
-    document_load(s : 'string) {
+    load(s : 'string)'heap document {
         s.nullTerminate()
-        d : document()
+        d := nullptr
         --c--
-        d.d.Parse((char*)s->data.data);
+        d = new rapidjson::Document();
+        ((rapidjson::Document*)d)->Parse(string_char(s));
         --c--
-        d
+        heap document(d)
     }
 
+    @heap
     document(
-        --cvar--
-        rapidjson::Document d;
-        --cvar--
+        d : nullptr
 
-        getAt(key : 'string) {
-            key.nullTerminate()
+        root() {
             v : value(parent)
             --c--
-            v.v = &_parent->d[(char*)key->data.data];
+            v.v = _parent->d;
             --c--
             v
         }
     ) { 
         this 
     } copy {
+        halt("copy is not allowed")
+    } destroy {
         --c--
-        _this->d.CopyFrom(_from->d, _this->d.GetAllocator());
+        if (_this->d) {
+            delete (rapidjson::Document*)_this->d;
+        }
         --c--
-    } destroy { }
+    }
 
     value(
-        root : 'document
-        --cvar--
-        rapidjson::Value* v;
-        --cvar--
+        root : heap document()
+        v : nullptr
 
+        getAt(key : 'string)'value? {
+            key.nullTerminate()
+            hasValue := false
+            --c--
+            hasvalue = ((JsonValue*)_parent->v)->HasMember(string_char(key));
+            --c--
+            if hasValue {
+                childv := nullptr 
+                --c--
+                childv = &(*((JsonValue*)_parent->v))[string_char(key)];
+                --c--
+                valid(value(root, childv))
+            } else {
+                empty'value
+            }
+        }
+
+        each(cb : '(:value)void) {
+            arraySize := 0
+            --c--
+            arraysize = ((JsonValue*)_parent->v)->Size();
+            --c--
+            for i : 0 to arraySize {
+                childv := nullptr 
+                --c--
+                childv = &(*((JsonValue*)_parent->v))[i];
+                --c--
+                cb(value(root, childv))
+            }
+        }
+        
         asi32() {
             --c--
-            #return(i32, _parent->v->GetInt())
+            if (_parent->v) {
+                #return(i32, ((JsonValue*)_parent->v)->GetInt());
+            } else {
+                #return(i32, 0);
+            }
             --c--
         }
 
         asu32() {
             --c--
-            #return(u32, _parent->v->GetUint())
+            if (_parent->v) {
+                #return(u32, ((JsonValue*)_parent->v)->GetUint())
+            } else {
+                #return(u32, 0);
+            }
             --c--
         }
 
         asi64() {
             --c--
-            #return(i64, _parent->v->GetInt64())
+            if (_parent->v) {
+                #return(i64, ((JsonValue*)_parent->v)->GetInt64())
+            } else {
+                #return(i64, 0);
+            }
             --c--
         }
 
         asu64() {
             --c--
-            #return(u64, _parent->v->GetUint64())
+            if (_parent->v) {
+                #return(u64, ((JsonValue*)_parent->v)->GetUint64())
+            } else {
+                #return(u64, 0);
+            }
             --c--
         }
 
         asf32() {
             --c--
-            #return(f32, _parent->v->GetFloat())
+            if (_parent->v) {
+                #return(f32, ((JsonValue*)_parent->v)->GetFloat())
+            } else {
+                #return(f32, 0);
+            }
             --c--
         }
 
         asf64() {
             --c--
-            #return(f64, _parent->v->GetDouble())
+            if (_parent->v) {
+                #return(f64, ((JsonValue*)_parent->v)->GetDouble())
+            } else {
+                #return(f64, 0);
+            }
             --c--
         }
 
         asString() {
-            data := nullptr
-            count := 0
-            dataSize := 0
-            --c--
-            count = _parent->v->GetStringLength();
-            datasize = (((count - 1) / 256) + 1) * 256;
-            data = (char*)malloc(datasize);
-            memcpy(data, _parent->v->GetString(), count);
-            --c--
-            string(count := count, data := array!char(dataSize := dataSize, data := data, count := count))
+            if v != nullptr {
+                vresult := nullptr
+                count := 0
+                --c--
+                count = ((JsonValue*)_parent->v)->GetStringLength();
+                int datasize = (((count - 1) / 256) + 1) * 256;
+                sjs_array* arr = createarray(datasize);
+                vresult = (void*)arr;
+                arr->count = count;
+                memcpy(arr->data, ((JsonValue*)_parent->v)->GetString(), count);
+                --c--
+                string(count := count, data := array!char(vresult))
+            } else {
+                string()
+            }
         }
-    ) { 
-        this 
-    } copy {
-        --c--
-        _this->v = _from->v;
-        --c--
-    } destroy { }
+    ) { this }
 }
