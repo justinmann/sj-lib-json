@@ -144,7 +144,7 @@ package json {
                 --c--
                 count = ((JsonValue*)_parent->v)->GetStringLength();
                 int datasize = (((count - 1) / 256) + 1) * 256;
-                sjs_array* arr = createarray(datasize);
+                sjs_array* arr = createarray(1, datasize);
                 vresult = (void*)arr;
                 arr->count = count;
                 memcpy(arr->data, ((JsonValue*)_parent->v)->GetString(), count);
