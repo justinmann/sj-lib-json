@@ -1,157 +1,219 @@
---cinclude--
-#include(<lib/sj-lib-json/rapidjson/document.h>)
-#include(<lib/sj-lib-json/rapidjson/writer.h>)
-#include(<lib/sj-lib-json/rapidjson/stringbuffer.h>)
---cinclude--
-
---cfunction--
-typedef rapidjson::GenericValue<rapidjson::UTF8<>, rapidjson::MemoryPoolAllocator<> > JsonValue;
---cfunction--
-
 package json {
-    load(s : 'string)'heap document {
-        s.nullTerminate()
-        d := nullptr
-        --c--
-        d = new rapidjson::Document();
-        ((rapidjson::Document*)d)->Parse(string_char(s));
-        --c--
-        heap document(d)
+    parse_whitespace(s : 'string, startIndex : 'i32)'i32 {
+        index := startIndex
+        isMatched := true
+        while index < s.count && isMatched {
+            ch : s.getAt(index)
+            if ch == '\r' || ch == '\n' || ch == '\t' || ch == ' ' {
+                index++
+            } else {
+                isMatched = false
+            }
+        }
+        index
     }
 
-    @heap
-    document(
-        d : nullptr
+    parse_string(s : 'string, startIndex : 'i32)'tuple2![i32, string] {
+        isEscaped := false
+        index := startIndex + 1
+        isMatched := false
+        while index < s.count && !isMatched {
+            ch : s[index]
+            if !isEscaped && ch == '\\' {
+                isEscaped = true
+            } else {
+                if ch == '\"' {
+                    isMatched = true
+                }
+                isEscaped = false
+            }
+            index++
+        }
+        
+        if isMatched {
+            (index, s.substr(startIndex, index - startIndex))
+        } else {
+            (s.count + 1, "")
+        }
+    }
 
-        root() {
-            v : value(parent)
-            --c--
-            v.v = _parent->d;
-            --c--
-            v
+    parse_number(s : 'string, startIndex : 'i32)'tuple2![i32, string] {
+        isEscaped := false
+        index := startIndex
+        isMatched := true
+        while index < s.count && isMatched {
+            ch : s[index]
+            if (ch >= '0' && ch <= '9') || ch == '.' || (ch >= 'a' && ch <= 'z') {
+                index++
+            } else {
+                isMatched = false
+            }
         }
-    ) { 
-        this 
-    } copy {
-        halt("copy is not allowed")
-    } destroy {
-        --c--
-        if (_this->d) {
-            delete (rapidjson::Document*)_this->d;
+        
+        (index, s.substr(startIndex, index - startIndex))
+    }
+
+    parse_value(s : 'string, startIndex : 'i32)'tuple2![i32, value] {
+        // skip whitespace
+        index := parse_whitespace(s, startIndex)
+        switch s[index] {
+            '{' {
+                // hash
+                h : hash![string, value]()
+                index++
+                isFirst := true
+                shouldContinue := true
+                while index < s.count && shouldContinue {
+                    index = parse_whitespace(s, index)
+                    if isFirst {
+                        isFirst = false
+                        if index < s.count && s[index] == '}' {
+                            index++
+                            shouldContinue = false
+                        }
+                    } else {
+                        if s[index] == ',' {
+                            index++
+                            index = parse_whitespace(s, index)
+                        } else {
+                            index = s.count + 1
+                        }
+                    }
+
+                    if shouldContinue {
+                        if index < s.count && s[index] == '\"' {
+                            keyResult : parse_string(s, index)
+                            index = keyResult.item1 + 1
+                            key : if keyResult.item2.count > 0 { keyResult.item2.substr(1, keyResult.item2.count - 2) } else { "" }
+
+                            index = parse_whitespace(s, index)
+
+                            if s[index] == ':' {
+                                index++
+                            } else {
+                                index = s.count + 1
+                            }
+
+                            index = parse_whitespace(s, index)
+
+                            valueResult : parse_value(s, index)
+                            index = valueResult.item1
+                            value : valueResult.item2
+
+                            h[key] = value
+
+                            index = parse_whitespace(s, index)
+                            
+                            if index < s.count && s[index] == '}' {
+                                index++
+                                shouldContinue = false
+                            }
+                        } else {
+                            index = s.count + 1
+                        }
+                    }
+                }
+                (index, value(h : h))
+            }
+            '[' {
+                // array
+                l : list![value]()
+                index++
+                isFirst := true
+                shouldContinue := true
+                while index < s.count && shouldContinue {
+                    index = parse_whitespace(s, index)
+                    if isFirst {
+                        isFirst = false
+                        if index < s.count && s[index] == ']' {
+                            index++
+                            shouldContinue = false
+                        }
+                    } else {
+                        if s[index] == ',' {
+                            index++
+                        } else {
+                            index = s.count + 1
+                        }
+                    }
+
+                    valueResult : parse_value(s, index)
+                    index = valueResult.item1
+                    value : valueResult.item2
+
+                    l.add(value)
+
+                    index = parse_whitespace(s, index)
+
+                    if index < s.count && s[index] == ']' {
+                        index++
+                        shouldContinue = false
+                    }
+                }
+                (index, value(a : l.arr))
+            }
+            '\"' {
+                // string
+                result : parse_string(s, index)
+                (result.item1, value(s : result.item2))
+            } 
+            default{
+                // number
+                result : parse_number(s, index)                
+                (result.item1, value(s : result.item2))
+            }
         }
-        --c--
+    }
+
+    parse(s : 'string)'value? {
+        result : parse_value(s, 0)
+        if result.item1 == s.count {
+            valid(optionalCopy result.item2)
+        } else {
+            empty'value
+        }
     }
 
     value(
-        root : heap document()
-        v : nullptr
+        s : empty'string
+        a : empty'array!value
+        h : empty'hash![string, value]
 
         getAt(key : 'string)'value? {
-            key.nullTerminate()
-            hasValue := false
-            --c--
-            hasvalue = ((JsonValue*)_parent->v)->HasMember(string_char(key));
-            --c--
-            if hasValue {
-                childv := nullptr 
-                --c--
-                childv = &(*((JsonValue*)_parent->v))[string_char(key)];
-                --c--
-                valid(value(root, childv))
-            } else {
+            ifValid h {
+                h[key]
+            } elseEmpty {
                 empty'value
             }
         }
 
-        each(cb : '(:value)void) {
-            arraySize := 0
-            --c--
-            arraysize = ((JsonValue*)_parent->v)->Size();
-            --c--
-            for i : 0 to arraySize {
-                childv := nullptr 
-                --c--
-                childv = &(*((JsonValue*)_parent->v))[i];
-                --c--
-                cb(value(root, childv))
+        asString()'string {
+            ifValid s {
+                if s[0] == '\"' && s[s.count - 1] == '\"' {
+                    s.substr(1, s.count - 2)
+                } else {
+                    optionalCopy s
+                }
+            } elseEmpty {
+                ""
             }
-        }
-        
-        asi32() {
-            --c--
-            if (_parent->v) {
-                #return(i32, ((JsonValue*)_parent->v)->GetInt());
-            } else {
-                #return(i32, 0);
-            }
-            --c--
         }
 
-        asu32() {
-            --c--
-            if (_parent->v) {
-                #return(u32, ((JsonValue*)_parent->v)->GetUint())
-            } else {
-                #return(u32, 0);
-            }
-            --c--
-        }
-
-        asi64() {
-            --c--
-            if (_parent->v) {
-                #return(i64, ((JsonValue*)_parent->v)->GetInt64())
-            } else {
-                #return(i64, 0);
-            }
-            --c--
-        }
-
-        asu64() {
-            --c--
-            if (_parent->v) {
-                #return(u64, ((JsonValue*)_parent->v)->GetUint64())
-            } else {
-                #return(u64, 0);
-            }
-            --c--
-        }
-
-        asf32() {
-            --c--
-            if (_parent->v) {
-                #return(f32, ((JsonValue*)_parent->v)->GetFloat())
-            } else {
-                #return(f32, 0);
-            }
-            --c--
-        }
-
-        asf64() {
-            --c--
-            if (_parent->v) {
-                #return(f64, ((JsonValue*)_parent->v)->GetDouble())
-            } else {
-                #return(f64, 0);
-            }
-            --c--
-        }
-
-        asString() {
-            if v != nullptr {
-                vresult := nullptr
-                count := 0
-                --c--
-                count = ((JsonValue*)_parent->v)->GetStringLength();
-                int datasize = (((count - 1) / 256) + 1) * 256;
-                sjs_array* arr = createarray(1, datasize);
-                vresult = (void*)arr;
-                arr->count = count;
-                memcpy(arr->data, ((JsonValue*)_parent->v)->GetString(), count);
-                --c--
-                string(count := count, data := array!char(vresult))
-            } else {
-                string()
+        render()'string {
+            ifValid s {
+                optionalCopy s
+            } elseEmpty {
+                ifValid a {
+                    "[ " + a.map!string(^{ _.render() }) as string + " ]"
+                } elseEmpty {
+                    ifValid h {
+                        "{ " + h.asArray!string(^{
+                            "\"" + _1 + "\" : " + (_2.render()) 
+                        }) as string + " }"
+                    } elseEmpty {
+                        ""
+                    }
+                }    
             }
         }
     ) { this }
